@@ -1,0 +1,25 @@
+// generated from rosidl_adapter/resource/srv.idl.em
+// with input from camera_interfaces/srv/CameraSrv.srv
+// generated code does not contain a copyright notice
+
+#include "builtin_interfaces/msg/Time.idl"
+#include "sensor_msgs/msg/Image.idl"
+
+module camera_interfaces {
+  module srv {
+    @verbatim (language="comment", text=
+      "Request")
+    struct CameraSrv_Request {
+      uint8 structure_needs_at_least_one_member;
+    };
+    struct CameraSrv_Response {
+      @verbatim (language="comment", text=
+        "Response")
+      sensor_msgs::msg::Image rgb_image;
+
+      sensor_msgs::msg::Image depth_image;
+
+      builtin_interfaces::msg::Time timestamp;
+    };
+  };
+};
