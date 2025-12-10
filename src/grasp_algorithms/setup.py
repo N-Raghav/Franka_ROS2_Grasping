@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'antipodal_node = grasp_algorithms.antipodal_node:main',
         ],
     },
 )

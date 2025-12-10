@@ -14,8 +14,6 @@ This project implements a complete control and grasping system for the Franka Em
 - [Grasping Pipeline](#grasping-pipeline)
 - [Project Components](#project-components)
 - [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [License](#license)
 
 ---
 
@@ -37,7 +35,7 @@ RBE595/
 │   │   │       ├── gravity_compensation_example_controller.launch.py
 │   │   │       └── joint_velocity_example_controller.launch.py
 │   │   │
-│   │   ├── franka_control2/            # Custom control node (C++)
+│   │   ├── franka_control2/            
 │   │   │   ├── src/
 │   │   │   │   └── franka_control2_node.cpp # Main control node
 │   │   │   ├── CMakeLists.txt

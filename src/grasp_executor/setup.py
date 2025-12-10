@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'panda_grasp_executor = grasp_executor.panda_grasp_executor:main',
         ],
     },
 )

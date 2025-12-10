@@ -1,0 +1,11 @@
+merlabros2@merlabros2:~/RBE595$ ros2 run tf2_ros static_transform_publisher   0.05 0 0   0 0 0   panda_link8 camera_frame
+[WARN] [1765405747.086091550] []: Old-style arguments are deprecated; see --help for new-style arguments
+2025-12-10 17:29:07.087 [RTPS_TRANSPORT_SHM Error] Failed init_port fastrtps_port7411: open_and_lock_file failed -> Function open_port_internal
+[INFO] [1765405747.093638782] [static_transform_publisher_PVxwsAMvLF3swNab]: Spinning until stopped - publishing transform
+translation: ('0.050000', '0.000000', '0.000000')
+rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+from 'panda_link8' to 'camera_frame'
+
+
+ros2 launch grasp_bringup grasp_pipeline.launch.py
+

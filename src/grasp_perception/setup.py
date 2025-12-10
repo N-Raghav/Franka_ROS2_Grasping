@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'obstacle_node = grasp_perception.obstacle_node:main',
         ],
     },
 )
