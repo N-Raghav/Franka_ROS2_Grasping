@@ -1,7 +1,7 @@
-# RBE595 - Franka Panda Robot Control with ROS 2, MoveIt, and Autonomous Grasping
+# RBE595 - Franka Panda Robot Control with ROS 2, MoveIt, and Grasping
 
 ## Overview
-This project implements a complete control and grasping system for the Franka Emika Panda robot using ROS 2 Humble and MoveIt2. It includes simulation capabilities, motion planning, hardware control, object detection, and an integrated autonomous grasping pipeline with perception, planning, and execution modules.
+This project implements a complete control and grasping system for the Franka Emika Panda robot using ROS 2 Humble and MoveIt2. It includes simulation capabilities, motion planning, hardware control, object detection, and an integrated grasping pipeline with perception, planning, and execution modules.
 
 ---
 
