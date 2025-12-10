@@ -1,185 +1,150 @@
 #!/usr/bin/env python3
-# infer.py
+# classify_server.py
+
 import sys
 import os
 import logging
+import numpy as np
+import cv2
 import torch
 import torchvision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision import transforms
 from PIL import Image
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import pyrealsense2 as rs
+
+# ROS 2 Imports
+import rclpy
+from rclpy.node import Node
 from cv_bridge import CvBridge
 
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
+# Interface Imports
+from sensor_msgs.msg import Image as RosImage
+from camera_interfaces.srv import ClassifySrv
+# Assuming detection_msgs is the package containing BoundingBox
+from camera_interfaces import BoundingBox 
 
-import cv2
-from PIL import Image
-import numpy as np
-
-import rospy
-from std_msgs.msg import Float64MultiArray, Float64
-from robots_for_recycling.srv import ClassifySrv, ClassifySrvResponse
-
-class ClassifyServer:
+class ClassifyServer(Node):
     def __init__(self):
-        rospy.init_node("classify_server")
-        rospy.sleep(1.0)
-        rospy.loginfo("Classify Server Ready")
-
-        self.s = rospy.Service('classify_waste', ClassifySrv, self.run_classifier)
-
-
-        # Set up logging
-        self.logger = logging.getLogger('infer_logger')
-        self.logger.setLevel(logging.DEBUG)
-
-        # Create handlers for console and file logging
+        super().__init__('classify_server')
+        
+        # Initialize Service
+        self.srv = self.create_service(ClassifySrv, 'classify_waste', self.run_classifier)
+        
+        # Logging
+        # In ROS 2, we can use the node's logger, but keeping your custom logger setup is fine too.
+        self.logger_custom = logging.getLogger('infer_logger')
+        self.logger_custom.setLevel(logging.DEBUG)
+        
         c_handler = logging.StreamHandler(sys.stdout)
         f_handler = logging.FileHandler('infer.log')
-
         c_handler.setLevel(logging.DEBUG)
         f_handler.setLevel(logging.DEBUG)
-
-        # Create formatters and add them to handlers
+        
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         c_handler.setFormatter(formatter)
         f_handler.setFormatter(formatter)
+        
+        self.logger_custom.addHandler(c_handler)
+        self.logger_custom.addHandler(f_handler)
 
-        # Add handlers to the logger
-        self.logger.addHandler(c_handler)
-        self.logger.addHandler(f_handler)
+        self.get_logger().info("Classify Server Ready")
 
         # Constants
-        # CLASSES = ['__background__', 'recycling', 'nonrecycling']  # Include background
-        # CLASSES = ['__background__', 'nonplastic', 'plastic']
         self.CLASSES = ['__background__', 'cardboard', 'glass', 'metal', 'paper', 'plastic']
-
         self.NUM_CLASSES = len(self.CLASSES)
-
-        # if issues: make sure you have the full folder open so that relative filepaths work 
-        current_dir = os.getcwd()
-        print(current_dir)
-        # current_dir = os.path.join(current_dir, "robots_for_recycling")
-        self.model_name = os.path.join(current_dir, 'models/mobilenet_ss_18_wd_0001_class_dataset/fasterrcnn_model.pth')
         self.confidence_threshold = 0.7
 
-        self.bridge = CvBridge()
+        # Model Path Handling
+        # Note: In ROS 2 launch contexts, os.getcwd() often returns ~/.ros or the launch dir.
+        # It is safer to use parameters or ament_index_python to find paths.
+        current_dir = os.getcwd()
+        print(f"Current Directory: {current_dir}")
+        self.model_name = os.path.join(current_dir, 'models/mobilenet_ss_18_wd_0001_class_dataset/fasterrcnn_model.pth')
 
+        # Initialize CV Bridge
+        self.bridge = CvBridge()
+        
+        # Load Model once at startup (Optimization)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = self.get_model_instance_segmentation(self.NUM_CLASSES)
+        
+        if os.path.exists(self.model_name):
+            self.model.load_state_dict(torch.load(self.model_name, map_location=self.device))
+            self.model.eval().to(self.device)
+            self.get_logger().info(f"Model loaded from {self.model_name}")
+        else:
+            self.get_logger().error(f"Model file not found at {self.model_name}")
 
     def get_model_instance_segmentation(self, num_classes):
         model = torchvision.models.detection.fasterrcnn_mobilenet_v3_large_fpn(pretrained=False)
-        self.logger.info("Initialized Faster R-CNN model with MobileNetV3 backbone.")
-
-        # Get the number of input features for the classifier
         in_features = model.roi_heads.box_predictor.cls_score.in_features
-
-        # Replace the pre-trained head with a new one
         model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-        self.logger.info("Modified the model's box predictor to accommodate the new number of classes.")
-
         return model
 
     def infer_frame(self, model, frame, device):
         transform = transforms.ToTensor()
         input_tensor = transform(frame).to(device)
-
         with torch.no_grad():
             outputs = model([input_tensor])[0]
         return outputs
 
-    def draw_bounding_boxes(self, frame, boxes, labels, scores, threshold=0.5): 
-        for box, label, score in zip(boxes, labels, scores):
-            if score > threshold:
-                xmin, ymin, xmax, ymax = map(int, box)
-                class_name = self.CLASSES[label]
-                cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 255, 0), 2)
-                cv2.putText(frame, f'{class_name}: {score:.2f}', (xmin, ymin - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        return frame
-
-    def run_classifier(self, req):
+    def run_classifier(self, request, response):
+        self.get_logger().info("Incoming request...")
         
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model = self.get_model_instance_segmentation(self.NUM_CLASSES)
-        # model.load_state_dict(torch.load('fasterrcnn_model.pth', map_location=device))
-        model.load_state_dict(torch.load(self.model_name, map_location=device))
+        try:
+            # Convert ROS Image to CV2
+            rgb_frame = self.bridge.imgmsg_to_cv2(request.rgb_image, desired_encoding="rgb8")
+            pil_image = Image.fromarray(rgb_frame)
 
-        model.eval().to(device)
+            # Run inference
+            outputs = self.infer_frame(self.model, pil_image, self.device)
+            
+            # Extract results
+            boxes = outputs['boxes'].cpu().numpy()
+            labels = outputs['labels'].cpu().numpy()
+            scores = outputs['scores'].cpu().numpy()
 
-        # # Open a connection to the webcam
-        # cv2.VideoCapture()
-        # for i in range(5):  # Testing indices from 0 to 4
-        #     cap = cv2.VideoCapture(i)
-        #     if cap.isOpened():
-        #         print(f"Camera found at index {i}")
-        #         # break
-        #     cap.release()
-        # else:
-        #     print("No camera found")
+            response.boxes = []
 
-        # # cap = cv2.VideoCapture(1)
-        # cap = cv2.VideoCapture(4)
+            for box, label, score in zip(boxes, labels, scores):
+                if score > self.confidence_threshold:
+                    xmin, ymin, xmax, ymax = map(int, box)
+                    
+                    # Create the BoundingBox message and populate it
+                    bbox_msg = BoundingBox()
+                    bbox_msg.xmin = float(xmin)
+                    bbox_msg.ymin = float(ymin)
+                    bbox_msg.xmax = float(xmax)
+                    bbox_msg.ymax = float(ymax)
+                    bbox_msg.confidence = float(score)
+                    
+                    # Map the numeric label to the string class name
+                    # Ensure self.CLASSES has the correct mapping order
+                    class_name = self.CLASSES[int(label)]
+                    bbox_msg.class_label = class_name
+                    
+                    response.boxes.append(bbox_msg)
+
+            self.get_logger().info(f'Sending {len(response.boxes)} bounding boxes')
+            self.logger_custom.info("Real-time detection ended.")
+
+        except Exception as e:
+            self.get_logger().error(f"Error during classification: {e}")
+            import traceback
+            self.get_logger().error(traceback.format_exc())
         
-        # if not cap.isOpened():
-        #     self.logger.error("Failed to open webcam.")
-        #     sys.exit(1)
-
-        # self.logger.info("Starting real-time object detection. Press 'q' to quit.")
-
-        # # while True:
-        # ret, frame = cap.read()
-        # if not ret:
-        #     self.logger.error("Failed to grab frame.")
-        #     sys.exit(1)
-            # break
-
-        ros_img_msg = req.rgb_image
-        rgb_frame = self.bridge.imgmsg_to_cv2(ros_img_msg, desired_encoding="rgb8")
-
-        # Convert frame to RGB and PIL Image
-        # rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(rgb_frame)
-
-        # Run inference
-        outputs = self.infer_frame(model, pil_image, device)
-        
-        # Get the boxes, labels, and scores
-        boxes = outputs['boxes'].cpu().numpy()
-        labels = outputs['labels'].cpu().numpy()
-        scores = outputs['scores'].cpu().numpy()
-
-        # Draw the bounding boxes and labels on the frame
-        # frame = self.draw_bounding_boxes(frame, boxes, labels, scores, threshold=self.confidence_threshold)
-
-        yolo_v5_array = []
-        i = 0
-        for box, label, score in zip(boxes, labels, scores):
-            if score > self.confidence_threshold:
-                xmin, ymin, xmax, ymax = map(int, box)
-                width = xmax - xmin
-                height = ymax - ymin
-                center_x = (xmax + xmin) / 2
-                center_y = (ymax + ymin) / 2
-                yolo_v5_array.append([label, center_x, center_y, width, height])
-                i += 1
-        yolo_v5_array = np.array(yolo_v5_array, dtype=np.float64).flatten()
-
-        response = ClassifySrvResponse()
-        response.bbs.data = yolo_v5_array
-        rospy.loginfo(f'Sending bounding boxes {response.bbs}')
-
-        self.logger.info("Real-time detection ended.")
-
         return response
 
-    def run(self):
-        rospy.spin()
-
+def main(args=None):
+    rclpy.init(args=args)
+    node = ClassifyServer()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
-    
-    ClassifyServer().run()
+    main()
