@@ -14,9 +14,7 @@ class AntipodalNode(Node):
         super().__init__('antipodal_node')
         self.sub = self.create_subscription(PointCloud2, '/object_cloud', self.cb, 1)
         self.pub = self.create_publisher(GraspCandidateArray, '/grasp_candidates', 1)
-        self.grasp_found = False 
-
-        # --- TF SETUP (CRITICAL FOR TOP-DOWN) ---
+        self.grasp_found = False # Lock after first grasp found
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 

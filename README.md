@@ -247,7 +247,8 @@ RBE595/
 │   │   └── test/
 │   │
 │   └── Beckhoff High Level Controller/  # Beckhoff PLC integration
-│       └── beckhoff.py                 # PLC communication interface
+│       └── Beckhoff_Controller.py                 # PLC communication interface
+        └── SuctionValveControl.py   
 │
 ├── install/                            # Built packages (auto-generated)
 │   ├── camera_interfaces/

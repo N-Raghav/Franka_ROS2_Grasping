@@ -61,9 +61,7 @@ class RealSenseObstacleNode(Node):
         # 2. Generate Point Cloud
         points_rs = self.pc_gen.calculate(depth_frame)
         
-        # 3. Convert to NumPy (Robust Method)
-        # Using .view(np.float32) on the raw buffer is fast but assumes specific memory layout.
-        # This checks if we have data first.
+        # 3. Convert to NumPy Array
         if points_rs.size() == 0: return
         
         vtx = np.asanyarray(points_rs.get_vertices())

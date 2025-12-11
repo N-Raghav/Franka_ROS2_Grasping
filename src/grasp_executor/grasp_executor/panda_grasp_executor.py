@@ -5,9 +5,7 @@ from rclpy.action import ActionClient
 from grasp_interfaces.msg import GraspCandidateArray
 from geometry_msgs.msg import PoseStamped
 import tf2_ros
-# --- FIX 1: Import this to enable PoseStamped support in TF2 ---
 import tf2_geometry_msgs 
-# ---------------------------------------------------------------
 from moveit_msgs.action import MoveGroup
 try:
     from franka_msgs.action import Grasp as FrankaGrasp
