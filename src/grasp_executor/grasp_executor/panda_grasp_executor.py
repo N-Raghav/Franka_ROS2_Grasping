@@ -17,80 +17,90 @@ class PandaGraspExecutor(Node):
         super().__init__('panda_grasp_executor')
         self.sub = self.create_subscription(GraspCandidateArray, '/grasp_candidates', self.cb, 1)
         self.move_action_client = ActionClient(self, MoveGroup, 'move_action')
-        # Check your gripper topic name in 'ros2 action list'
         self.gripper_client = ActionClient(self, FrankaGrasp, '/panda_gripper/grasp') 
 
         self.tfbuf = tf2_ros.Buffer()
         self.tfl = tf2_ros.TransformListener(self.tfbuf, self)
         
-        # --- FIX 2: State Flag to prevent spamming ---
         self.grasping_active = False 
+        
+        # --- CONFIGURATION ---
+        # Must match the z_offset in your AntipodalNode!
+        self.approach_distance = 0.15  
         
         self.get_logger().info("Grasp Executor Ready. Waiting for candidates...")
 
     def cb(self, msg: GraspCandidateArray):
-        # If we are already busy moving, ignore new candidates
-        if self.grasping_active:
-            return
+        if self.grasping_active: return
+        if len(msg.candidates) == 0: return
 
-        if len(msg.candidates) == 0: 
-            return
-
-        # Lock the node so we don't start a second grasp
         self.grasping_active = True
         self.get_logger().info("Candidate received! Locking executor...")
 
         best = max(msg.candidates, key=lambda g: g.score)
-        
         target_frame = 'panda_link0' 
+
         try:
-            # Wait for transform availability
             if not self.tfbuf.can_transform(target_frame, best.header.frame_id, rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0)):
                 self.get_logger().warn("Waiting for TF...")
-                self.grasping_active = False # Unlock if failed
+                self.grasping_active = False 
                 return
 
             p_stamped = PoseStamped()
             p_stamped.header = best.header
             p_stamped.pose = best.pose
             
-            # --- FIX 1: Use the buffer to transform the pose object directly ---
-            goal_stamped = self.tfbuf.transform(p_stamped, target_frame)
+            # This is the HOVER POSE (approx 15cm above object)
+            hover_pose = self.tfbuf.transform(p_stamped, target_frame)
             
         except Exception as e:
             self.get_logger().error(f"TF Error: {e}")
             self.grasping_active = False
             return
 
-        # EXECUTION SEQUENCE
-        self.get_logger().info("1. Moving to Pre-Grasp...")
-        pre_grasp = PoseStamped()
-        pre_grasp.header = goal_stamped.header
-        pre_grasp.pose = goal_stamped.pose
-        pre_grasp.pose.position.z += 0.15 
+        # --- 1. MOVE TO PRE-GRASP (HOVER) ---
+        self.get_logger().info(f"1. Moving to Pre-Grasp (Z={hover_pose.pose.position.z:.3f})...")
+        if not self.move_to_pose(hover_pose): 
+            self.grasping_active = False
+            return
+
+        # --- 2. OPEN GRIPPER ---
+        # Ensure gripper is open before descending
+        # (Assuming you have a moveit/action for open, or just use grasp with large width)
+        # self.trigger_gripper(width=0.08) 
+
+        # --- 3. DESCEND TO GRASP ---
+        self.get_logger().info("2. Descending to Grasp...")
+        grasp_pose = PoseStamped()
+        grasp_pose.header = hover_pose.header
+        grasp_pose.pose = hover_pose.pose
         
-        if not self.move_to_pose(pre_grasp): 
+        # CRITICAL FIX: Subtract the offset to go DOWN to the object
+        # We go slightly lower (0.005) to ensure fingers surround the top surface
+        grasp_pose.pose.position.z -= (self.approach_distance + 0.005)
+
+        if not self.move_to_pose(grasp_pose): 
             self.grasping_active = False
             return
 
-        self.get_logger().info("2. Moving to Grasp...")
-        if not self.move_to_pose(goal_stamped): 
-            self.grasping_active = False
-            return
-
+        # --- 4. CLOSE GRIPPER ---
         self.get_logger().info("3. Closing Gripper...")
-        self.trigger_gripper(width=best.width - 0.01)
+        self.trigger_gripper(width=best.width - 0.005) # Close slightly tighter than object
 
+        # --- 5. LIFT UP ---
         self.get_logger().info("4. Lifting...")
-        post_grasp = PoseStamped()
-        post_grasp.header = goal_stamped.header
-        post_grasp.pose = goal_stamped.pose
-        post_grasp.pose.position.z += 0.20
-        self.move_to_pose(post_grasp)
+        lift_pose = PoseStamped()
+        lift_pose.header = hover_pose.header
+        lift_pose.pose = hover_pose.pose
         
-        self.get_logger().info("Grasp Complete. Waiting 5 seconds before unlocking...")
-        # Optional: Reset flag to allow next grasp
-        # self.grasping_active = False 
+        # Lift 10cm higher than the original hover
+        lift_pose.pose.position.z += 0.10
+        
+        self.move_to_pose(lift_pose)
+        
+        self.get_logger().info("Grasp Complete. Unlocking in 5s...")
+        # rclpy.sleep(5.0) # Blocking sleep is bad in callbacks, but okay for simple logic
+        self.grasping_active = False 
 
     def move_to_pose(self, pose_stamped):
         if not self.move_action_client.wait_for_server(timeout_sec=2.0):
@@ -101,10 +111,10 @@ class PandaGraspExecutor(Node):
         goal_msg.request.group_name = "panda_arm" 
         goal_msg.request.num_planning_attempts = 10
         goal_msg.request.allowed_planning_time = 5.0
+        # Reduce velocity for the actual grasp approach for safety
         goal_msg.request.max_velocity_scaling_factor = 0.1 
         goal_msg.request.max_acceleration_scaling_factor = 0.1
         
-        # Constraints setup
         from moveit_msgs.msg import Constraints, PositionConstraint, OrientationConstraint
         from shape_msgs.msg import SolidPrimitive
 
@@ -154,6 +164,9 @@ class PandaGraspExecutor(Node):
         goal.width = width
         goal.speed = 0.05
         goal.force = force
+        
+        goal.epsilon.inner = 0.05
+        goal.epsilon.outer = 0.05
         
         future = self.gripper_client.send_goal_async(goal)
         rclpy.spin_until_future_complete(self, future)
